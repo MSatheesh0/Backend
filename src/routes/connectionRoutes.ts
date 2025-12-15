@@ -275,7 +275,8 @@ router.get(
         .populate("userId", "name email")
         .populate("requestorId", "name email")
         .populate("networkCodeId", "name description keywords codeId")
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean();
 
       res.json({
         message: "Connections retrieved successfully",
@@ -447,7 +448,8 @@ router.get(
         .populate("userId", "name email")
         .populate("requestorId", "name email")
         .populate("networkCodeId", "name description keywords")
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean();
 
       res.json({
         message: "Network code connections retrieved successfully",
@@ -507,7 +509,8 @@ router.get(
         status: "accepted",
       })
         .populate("requestorId", "name email role company location")
-        .sort({ connectionDate: -1 });
+        .sort({ connectionDate: -1 })
+        .lean();
 
       // Format response to show member details
       const members = connections.map((connection) => ({
@@ -713,7 +716,8 @@ router.get(
       })
         .populate("userId", "name email role company photoUrl connectionCount")
         .populate("requestorId", "name email role company photoUrl connectionCount")
-        .populate("networkCodeId", "name codeId description");
+        .populate("networkCodeId", "name codeId description")
+        .lean();
 
       // Extract unique members (excluding current user)
       const membersMap = new Map();

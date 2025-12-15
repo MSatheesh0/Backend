@@ -9,7 +9,10 @@ export interface IEvent extends Document {
     photos: string[]; // Base64 strings
     videos: string[]; // URLs or Base64 (limited support)
     tags: string[];
+    isVerified: boolean;
     createdBy: mongoose.Types.ObjectId;
+    attendees: mongoose.Types.ObjectId[];
+    eventEmbedding?: number[];
     createdAt: Date;
     updatedAt: Date;
 }
@@ -53,11 +56,26 @@ const eventSchema = new Schema<IEvent>(
                 trim: true,
             },
         ],
+        isVerified: {
+            type: Boolean,
+            default: false,
+        },
         createdBy: {
             type: Schema.Types.ObjectId,
             ref: "User",
             required: true,
         },
+        attendees: [
+            {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+            },
+        ],
+        eventEmbedding: [
+            {
+                type: Number,
+            },
+        ],
     },
     {
         timestamps: true,

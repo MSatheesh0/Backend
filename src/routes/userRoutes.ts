@@ -82,6 +82,8 @@ router.put(
         "location",
         "oneLiner",
         "photoUrl",
+        "interests",
+        "skills",
       ];
 
       // Filter out fields that are not allowed
@@ -132,6 +134,18 @@ router.put(
         }
       }
 
+      // Check if semantic fields are being updated
+      const semanticFields = [
+        "interests",
+        "skills",
+        "role",
+        "primaryGoal",
+        "location",
+      ];
+      const needsEmbeddingUpdate = semanticFields.some(
+        (field) => updates[field] !== undefined
+      );
+
       const user = await User.findByIdAndUpdate(
         req.user.userId,
         { $set: updates },
@@ -146,6 +160,7 @@ router.put(
         return;
       }
 
+      // Send response immediately
       res.status(200).json({
         id: user._id.toString(),
         email: user.email,
@@ -160,12 +175,46 @@ router.put(
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       });
+
+      // Generate embedding in background if needed
+      if (needsEmbeddingUpdate) {
+        console.log("ℹ️ Triggering background embedding update...");
+        (async () => {
+          try {
+            const { EmbeddingService } = await import(
+              "../services/embeddingService"
+            );
+            const userForEmbedding = await User.findById(req.user!.userId);
+            if (userForEmbedding) {
+              const profileText = EmbeddingService.createUserProfileText(userForEmbedding.toObject());
+              console.log("📝 Generating embedding for text:", profileText);
+
+              if (profileText) {
+                const embedding = await EmbeddingService.generateEmbedding(profileText);
+                if (embedding && embedding.length > 0) {
+                  await User.findByIdAndUpdate(req.user!.userId, { profileEmbedding: embedding });
+                  console.log("✅ Profile embedding updated successfully");
+                } else {
+                  console.warn("⚠️ Generated embedding was empty");
+                }
+              } else {
+                console.warn("⚠️ Profile text for embedding was empty");
+              }
+            }
+          } catch (error) {
+            console.error("❌ Background embedding generation failed:", error);
+          }
+        })();
+      }
     } catch (error) {
       console.error("Error in PUT /me:", error);
-      res.status(500).json({
-        error: "Internal Server Error",
-        message: "Failed to update user profile",
-      });
+      // Only send error if headers haven't been sent
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "Internal Server Error",
+          message: "Failed to update user profile",
+        });
+      }
     }
   }
 );

@@ -21,6 +21,7 @@ interface Config {
     fromName: string;
     fromEmail: string;
   };
+  geminiApiKey: string;
 }
 
 const config: Config = {
@@ -45,6 +46,7 @@ const config: Config = {
     fromName: process.env.SMTP_FROM_NAME || "GoalNet",
     fromEmail: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || "",
   },
+  geminiApiKey: process.env.GEMINI_API_KEY || "",
 };
 
 // Validate critical config

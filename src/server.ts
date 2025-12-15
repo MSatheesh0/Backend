@@ -14,6 +14,7 @@ import uploadRoutes from "./routes/uploadRoutes";
 import followingRoutes from "./routes/followingRoutes";
 import qrProfileRoutes from "./routes/qrProfileRoutes";
 import eventRoutes from "./routes/eventRoutes";
+import eventConnectionRoutes from "./routes/eventConnectionRoutes";
 import { debugLogger, logAppMode } from "./middleware/debugMiddleware";
 
 const app = express();
@@ -92,6 +93,9 @@ app.use("/users", userRoutes);
 
 // Event routes (protected)
 app.use("/events", eventRoutes);
+
+// Event Connection routes
+app.use("/event-connections", eventConnectionRoutes);
 
 // 404 handler
 app.use((_req: Request, res: Response) => {

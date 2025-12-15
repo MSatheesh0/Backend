@@ -11,15 +11,8 @@ const router = Router();
 /**
  * Helper function to check and update network code expiry status
  */
-async function checkAndExpireNetworkCode(networkCode: any) {
-  if (networkCode.expirationTime && new Date() > new Date(networkCode.expirationTime)) {
-    if (networkCode.isActive) {
-      networkCode.isActive = false;
-      await networkCode.save();
-    }
-  }
-  return networkCode;
-}
+// Helper function removed in favor of bulk update
+
 
 /**
  * POST /network-codes
@@ -145,43 +138,65 @@ router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
       query.expirationTime = { $lte: new Date() };
     }
 
+    // Bulk expire network codes
+    await NetworkCode.updateMany(
+      {
+        expirationTime: { $lte: new Date() },
+        isActive: true,
+      },
+      { $set: { isActive: false } }
+    );
+
     const networkCodes = await NetworkCode.find(query)
       .populate("userId", "name email")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Check and auto-expire network codes
-    for (const code of networkCodes) {
-      await checkAndExpireNetworkCode(code);
-    }
+    // Get all codeIds
+    const codeIds = networkCodes.map((nc) => nc.codeId);
 
-    // Add member counts to each network code
-    const networkCodesWithMemberCount = await Promise.all(
-      networkCodes.map(async (networkCode) => {
-        const [totalConnections, acceptedMembers, pendingRequests] =
-          await Promise.all([
-            Connection.countDocuments({ codeId: networkCode.codeId }),
-            Connection.countDocuments({
-              codeId: networkCode.codeId,
-              status: "accepted",
-            }),
-            Connection.countDocuments({
-              codeId: networkCode.codeId,
-              status: "pending",
-            }),
-          ]);
-
-        return {
-          ...networkCode.toObject(),
-          memberStats: {
-            totalConnections,
-            acceptedMembers,
-            pendingRequests,
-            rejectedRequests:
-              totalConnections - acceptedMembers - pendingRequests,
+    // Aggregate stats in a single query
+    const stats = await Connection.aggregate([
+      { $match: { codeId: { $in: codeIds } } },
+      {
+        $group: {
+          _id: "$codeId",
+          totalConnections: { $sum: 1 },
+          acceptedMembers: {
+            $sum: { $cond: [{ $eq: ["$status", "accepted"] }, 1, 0] },
           },
-        };
-      })
-    );
+          pendingRequests: {
+            $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    // Create a map for easy lookup
+    const statsMap = new Map();
+    stats.forEach((stat) => {
+      statsMap.set(stat._id, stat);
+    });
+
+    // Merge stats with network codes
+    const networkCodesWithMemberCount = networkCodes.map((networkCode) => {
+      const stat = statsMap.get(networkCode.codeId) || {
+        totalConnections: 0,
+        acceptedMembers: 0,
+        pendingRequests: 0,
+      };
+
+      return {
+        ...networkCode,
+        memberStats: {
+          totalConnections: stat.totalConnections,
+          acceptedMembers: stat.acceptedMembers,
+          pendingRequests: stat.pendingRequests,
+          rejectedRequests:
+            stat.totalConnections - stat.acceptedMembers - stat.pendingRequests,
+        },
+      };
+    });
 
     res.json({
       message: "Network codes retrieved successfully",
@@ -231,7 +246,14 @@ router.get(
       }
 
       // Check and auto-expire this network code
-      await checkAndExpireNetworkCode(networkCode);
+      if (
+        networkCode.expirationTime &&
+        new Date() > new Date(networkCode.expirationTime) &&
+        networkCode.isActive
+      ) {
+        networkCode.isActive = false;
+        await networkCode.save();
+      }
 
       // Add member statistics
       const [totalConnections, acceptedMembers, pendingRequests] =

@@ -16,6 +16,9 @@ export interface IUser extends Document {
   location?: string;
   oneLiner?: string;
   photoUrl?: string;
+  interests?: string[];
+  skills?: string[];
+  profileEmbedding?: number[];
   connectionCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +69,23 @@ const UserSchema = new Schema<IUser>(
       type: String,
       trim: true,
     },
+    interests: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    skills: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    profileEmbedding: [
+      {
+        type: Number,
+      },
+    ],
     connectionCount: {
       type: Number,
       default: 0,
@@ -75,5 +95,9 @@ const UserSchema = new Schema<IUser>(
     timestamps: true,
   }
 );
+
+// Indexes
+UserSchema.index({ name: 1 });
+UserSchema.index({ name: "text", email: "text", company: "text" });
 
 export const User = mongoose.model<IUser>("User", UserSchema);
