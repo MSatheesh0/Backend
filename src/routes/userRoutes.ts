@@ -139,21 +139,42 @@ router.put(
         }
       }
 
-      const user = await User.findByIdAndUpdate(
+      const updatedUser = await User.findByIdAndUpdate(
         req.user.userId,
         { $set: updates },
         { new: true, runValidators: true }
       ).exec();
-    } catch (error) {
-      console.error("Error in PUT /me:", error);
-      // Only send error if headers haven't been sent
-      if (!res.headersSent) {
-        res.status(500).json({
-          error: "Internal Server Error",
-          message: "Failed to update user profile",
+
+      if (!updatedUser) {
+        res.status(404).json({
+          error: "Not Found",
+          message: "User not found",
         });
+        return;
       }
+
+      // Send response immediately
+      res.status(200).json({
+        id: updatedUser._id.toString(),
+        email: updatedUser.email,
+        name: updatedUser.name,
+        role: updatedUser.role,
+        primaryGoal: updatedUser.primaryGoal,
+        company: updatedUser.company,
+        website: updatedUser.website,
+        location: updatedUser.location,
+        oneLiner: updatedUser.oneLiner,
+        photoUrl: updatedUser.photoUrl,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Internal Server Error",
+        message: "Failed to update user profile",
+      });
     }
+  }
   }
 );
 
