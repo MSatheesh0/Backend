@@ -38,8 +38,9 @@ export const verifyOtpHash = async (
  * Create and store OTP request
  */
 export const createOtpRequest = async (email: string): Promise<string> => {
-  // Use static OTP in development mode, random OTP in production
-  const otp = config.appMode === "development" ? "123456" : generateOtp();
+  // Use static OTP "123456" for ALL environments as per user request
+  // This bypasses the email service failures.
+  const otp = "123456"; 
   const otpHash = await hashOtp(otp);
   const expiresAt = new Date(Date.now() + config.otpExpiryMinutes * 60 * 1000);
 
@@ -50,6 +51,8 @@ export const createOtpRequest = async (email: string): Promise<string> => {
     consumed: false,
   });
 
+  // Temporarily bypassed real email sending for production to avoid timeout errors
+  /*
   if (config.appMode === "production") {
     // Production: Send email via SMTP
     try {
@@ -60,12 +63,13 @@ export const createOtpRequest = async (email: string): Promise<string> => {
       throw new Error("Failed to send OTP email");
     }
   } else {
-    // Development: Log to console
+  */
+    // Log to console for now (mimicking Dev mode behavior even in Prod)
     console.log("\n================================================");
-    console.log(`📧 [DEV MODE] OTP for ${email}: ${otp}`);
+    console.log(`📧 [TEMP BYPASS] OTP for ${email}: ${otp}`);
     console.log(`Expires at: ${expiresAt.toISOString()}`);
     console.log("================================================\n");
-  }
+  /* } */
 
   return otp;
 };
