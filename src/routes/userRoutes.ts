@@ -65,7 +65,9 @@ router.put(
   authMiddleware,
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
+      console.log('📥 PUT /me Request received', req.body);
       if (!req.user) {
+        console.warn('❌ PUT /me - No user in request');
         res.status(401).json({
           error: "Unauthorized",
           message: "User not authenticated",

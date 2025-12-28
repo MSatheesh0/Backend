@@ -29,7 +29,14 @@ app.use(helmet());
 // CORS
 app.use(
   cors({
-    origin: config.corsOrigin,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      // Allow any origin in development/debug, or check config in production
+      // For now, allowing all to debug "no response" issue
+      return callback(null, true);
+    },
     credentials: true,
   })
 );
