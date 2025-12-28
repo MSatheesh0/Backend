@@ -112,66 +112,38 @@ router.put(
         (field) => updates[field] !== undefined
       );
 
+      // Generate embedding SYNCHRONOUSLY if needed
+      if (needsEmbeddingUpdate) {
+        try {
+          const { EmbeddingService } = await import("../services/embeddingService");
+          // We need to merge existing user data with updates to generate a complete profile text
+          // Fetch current user first to get fields that aren't being updated
+          const currentUser = await User.findById(req.user.userId).lean();
+
+          if (currentUser) {
+            const mergedUser = { ...currentUser, ...updates };
+            const profileText = EmbeddingService.createUserProfileText(mergedUser);
+
+            console.log("📝 Generating embedding for profile text:", profileText);
+            if (profileText) {
+              const embedding = await EmbeddingService.generateEmbedding(profileText);
+              if (embedding && embedding.length > 0) {
+                updates.profileEmbedding = embedding; // Add to updates
+                console.log("✅ Profile embedding generated (Dimensions: " + embedding.length + ")");
+              }
+            }
+          }
+        } catch (err) {
+          console.error("❌ Failed to generate profile embedding:", err);
+          // Proceed without embedding if it fails, to not block the profile update
+        }
+      }
+
       const user = await User.findByIdAndUpdate(
         req.user.userId,
         { $set: updates },
         { new: true, runValidators: true }
       ).exec();
-
-      if (!user) {
-        res.status(404).json({
-          error: "Not Found",
-          message: "User not found",
-        });
-        return;
-      }
-
-      // Send response immediately
-      res.status(200).json({
-        id: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        primaryGoal: user.primaryGoal,
-        company: user.company,
-        website: user.website,
-        location: user.location,
-        oneLiner: user.oneLiner,
-        photoUrl: user.photoUrl,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      });
-
-      // Generate embedding in background if needed
-      if (needsEmbeddingUpdate) {
-        console.log("ℹ️ Triggering background embedding update...");
-        (async () => {
-          try {
-            const { EmbeddingService } = await import(
-              "../services/embeddingService"
-            );
-            const userForEmbedding = await User.findById(req.user!.userId);
-            if (userForEmbedding) {
-              const profileText = EmbeddingService.createUserProfileText(userForEmbedding.toObject());
-              console.log("📝 Generating embedding for text:", profileText);
-
-              if (profileText) {
-                const embedding = await EmbeddingService.generateEmbedding(profileText);
-                if (embedding && embedding.length > 0) {
-                  await User.findByIdAndUpdate(req.user!.userId, { profileEmbedding: embedding });
-                  console.log("✅ Profile embedding updated successfully");
-                } else {
-                  console.warn("⚠️ Generated embedding was empty");
-                }
-              } else {
-                console.warn("⚠️ Profile text for embedding was empty");
-              }
-            }
-          } catch (error) {
-            console.error("❌ Background embedding generation failed:", error);
-          }
-        })();
-      }
     } catch (error) {
       console.error("Error in PUT /me:", error);
       // Only send error if headers haven't been sent
