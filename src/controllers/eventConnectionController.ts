@@ -1,5 +1,6 @@
 
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import EventConnection from '../models/EventConnection';
 import { Event } from '../models/Event';
 
@@ -17,9 +18,9 @@ export const toggleEventParticipation = async (req: Request, res: Response) => {
         // Validate inputs
         if (!eventId || !participantId) {
             console.log('❌ Validation failed: Missing eventId or participantId');
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
-                message: 'Event ID and Participant ID are required' 
+                message: 'Event ID and Participant ID are required'
             });
         }
 
@@ -27,9 +28,9 @@ export const toggleEventParticipation = async (req: Request, res: Response) => {
         const event = await Event.findById(eventId);
         if (!event) {
             console.log('❌ Event not found:', eventId);
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: 'Event not found' 
+                message: 'Event not found'
             });
         }
 
@@ -40,7 +41,7 @@ export const toggleEventParticipation = async (req: Request, res: Response) => {
             // User wants to leave the event
             await EventConnection.deleteOne({ _id: existingConnection._id });
             console.log('✅ User left the event');
-            return res.status(200).json({ 
+            return res.status(200).json({
                 success: true,
                 message: 'Successfully left the event',
                 isJoined: false
@@ -66,10 +67,10 @@ export const toggleEventParticipation = async (req: Request, res: Response) => {
         }
     } catch (error) {
         console.error('❌ Error toggling event participation:', error);
-        res.status(500).json({ 
+        return res.status(500).json({
             success: false,
             message: 'Server error',
-            error: error.message 
+            error: (error as any).message
         });
     }
 };
@@ -83,18 +84,18 @@ export const checkEventParticipation = async (req: Request, res: Response) => {
         const { eventId, participantId } = req.params;
 
         const connection = await EventConnection.findOne({ eventId, participantId });
-        
-        res.status(200).json({
+
+        return res.status(200).json({
             success: true,
             isJoined: !!connection,
             connection: connection || null
         });
     } catch (error) {
         console.error('❌ Error checking event participation:', error);
-        res.status(500).json({ 
+        return res.status(500).json({
             success: false,
             message: 'Server error',
-            error: error.message 
+            error: (error as any).message
         });
     }
 };
@@ -106,7 +107,7 @@ export const checkEventParticipation = async (req: Request, res: Response) => {
 export const getEventParticipants = async (req: Request, res: Response) => {
     try {
         const { eventId } = req.params;
-        
+
         // Validate event ID
         if (!mongoose.Types.ObjectId.isValid(eventId)) {
             return res.status(400).json({
@@ -119,7 +120,7 @@ export const getEventParticipants = async (req: Request, res: Response) => {
             .populate('participantId', 'name email photoUrl role company position')
             .sort({ joinedAt: -1 });
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             count: participants.length,
             participants: participants.map(p => ({
@@ -129,10 +130,10 @@ export const getEventParticipants = async (req: Request, res: Response) => {
         });
     } catch (error) {
         console.error('❌ Error fetching event participants:', error);
-        res.status(500).json({ 
+        return res.status(500).json({
             success: false,
             message: 'Failed to fetch participants',
-            error: error.message 
+            error: (error as any).message
         });
     }
 };

@@ -181,9 +181,8 @@ class EmailService {
               <div class="otp-container">
                 <div class="otp-label">Your OTP Code</div>
                 <div class="otp-code">${otp}</div>
-                <div class="otp-expiry">⏰ Expires in ${
-                  config.otpExpiryMinutes
-                } minutes</div>
+                <div class="otp-expiry">⏰ Expires in ${config.otpExpiryMinutes
+      } minutes</div>
               </div>
               
               <div class="warning-box">
@@ -410,9 +409,8 @@ Need help? Contact us at support@tracksense.ai
               </div>
               
               <div class="cta-container">
-                <a href="${
-                  config.appUrl
-                }" class="cta-button">Get Started Now →</a>
+                <a href="${config.frontendUrl
+      }" class="cta-button">Get Started Now →</a>
               </div>
               
               <p style="color: #666; font-size: 14px; margin-top: 30px;">

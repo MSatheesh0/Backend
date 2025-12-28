@@ -2,7 +2,6 @@ import { Router, Request, Response } from "express";
 import {
   createOtpRequest,
   verifyOtpAndGetUser,
-  generateJwt,
   checkOtpRateLimit,
 } from "../services/authService";
 import {

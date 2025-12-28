@@ -29,7 +29,7 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
       .sort({ createdAt: -1 })
       .select("-__v");
 
-    res.json({
+    return res.json({
       goals: goals.map((goal) => ({
         id: goal._id,
         title: goal.title,
@@ -45,7 +45,7 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error fetching goals:", error);
-    res.status(500).json({ error: "Failed to fetch goals" });
+    return res.status(500).json({ error: "Failed to fetch goals" });
   }
 });
 
@@ -77,7 +77,7 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
       progress: 0,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       id: goal._id,
       title: goal.title,
       description: goal.description,
@@ -91,7 +91,7 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error creating goal:", error);
-    res.status(500).json({ error: "Failed to create goal" });
+    return res.status(500).json({ error: "Failed to create goal" });
   }
 });
 
@@ -161,7 +161,7 @@ router.put("/:id", authMiddleware, async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Goal not found" });
     }
 
-    res.json({
+    return res.json({
       id: goal._id,
       title: goal.title,
       description: goal.description,
@@ -175,7 +175,7 @@ router.put("/:id", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error updating goal:", error);
-    res.status(500).json({ error: "Failed to update goal" });
+    return res.status(500).json({ error: "Failed to update goal" });
   }
 });
 
@@ -224,14 +224,14 @@ router.delete("/:id", authMiddleware, async (req: Request, res: Response) => {
         return res.status(404).json({ error: "Goal not found" });
       }
 
-      res.json({
+      return res.json({
         message: "Goal deleted successfully",
         id: goal._id,
       });
     }
   } catch (error) {
     console.error("Error deleting goal:", error);
-    res.status(500).json({ error: "Failed to delete goal" });
+    return res.status(500).json({ error: "Failed to delete goal" });
   }
 });
 
