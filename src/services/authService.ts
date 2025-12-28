@@ -3,7 +3,6 @@ import jwt from "jsonwebtoken";
 import config from "../config";
 import { OtpRequest } from "../models/OtpRequest";
 import { User } from "../models/User";
-import emailService from "./emailService";
 
 /**
  * Generate a random numeric OTP of specified length
