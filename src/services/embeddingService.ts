@@ -9,19 +9,18 @@ let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
 // Function to get or initialize the pipeline
 const getExtractor = (): Promise<FeatureExtractionPipeline> => {
     if (!extractorPromise) {
-        // We use all-mpnet-base-v2 which produces 768-dim embeddings
-        // This matches our MongoDB vector index configuration.
-        // The model is downloaded automatically on first use.
-        console.log("Loading local embedding model (Xenova/all-mpnet-base-v2)...");
-        extractorPromise = pipeline("feature-extraction", "Xenova/all-mpnet-base-v2");
+        // We use all-MiniLM-L6-v2 which produces 384-dim embeddings
+        // This is much lighter (~80MB) and prevents OOM crashes on Render Free Tier
+        console.log("Loading local embedding model (Xenova/all-MiniLM-L6-v2)...");
+        extractorPromise = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
     }
     return extractorPromise;
 };
 
 export const EmbeddingService = {
     /**
-     * Generates a text embedding using local 'all-mpnet-base-v2' model.
-     * Dimensions: 768
+     * Generates a text embedding using local 'all-MiniLM-L6-v2' model.
+     * Dimensions: 384
      */
     generateEmbedding: async (text: string): Promise<number[]> => {
         try {
@@ -38,13 +37,13 @@ export const EmbeddingService = {
             const output = await extractor(text, { pooling: "mean", normalize: true });
 
             // Convert Tensor to plain array
-            // output.data is a Float32Array
             const embedding = Array.from(output.data) as number[];
 
             return embedding;
         } catch (error) {
             console.error("Error generating local embedding:", error);
-            throw error; // Re-throw to allow caller to decide flow
+            // Fallback to zeros if generation fails (384 dimensions)
+            return new Array(384).fill(0);
         }
     },
 
