@@ -1,14 +1,20 @@
 import mongoose, { Document, Schema } from "mongoose";
 
+console.log("LOADING EVENT SCHEMA DEFINITION v3 - " + new Date().toISOString());
+
 export interface IEvent extends Document {
     name: string;
     headline?: string;
     description: string;
-    dateTime: Date;
+    dateTime?: Date; // Optional for communities
     location: string;
     photos: string[]; // Base64 strings
     videos: string[]; // URLs or Base64 (limited support)
     tags: string[];
+    pdfFile?: string; // Base64 encoded PDF (only for events)
+    pdfExtractedText?: string; // Extracted text from PDF
+    isEvent: boolean;
+    isCommunity: boolean;
     isVerified: boolean;
     createdBy: mongoose.Types.ObjectId;
     attendees: mongoose.Types.ObjectId[];
@@ -40,7 +46,7 @@ const eventSchema = new Schema<IEvent>(
         },
         dateTime: {
             type: Date,
-            required: true,
+            required: false, // Optional for communities
         },
         location: {
             type: String,
@@ -69,6 +75,20 @@ const eventSchema = new Schema<IEvent>(
                 trim: true,
             },
         ],
+        pdfFile: {
+            type: String, // Base64 encoded PDF
+        },
+        pdfExtractedText: {
+            type: String, // Extracted text from PDF
+        },
+        isEvent: {
+            type: Boolean,
+            default: true,
+        },
+        isCommunity: {
+            type: Boolean,
+            default: false,
+        },
         isVerified: {
             type: Boolean,
             default: false,
@@ -98,5 +118,17 @@ const eventSchema = new Schema<IEvent>(
 // Indexes
 eventSchema.index({ createdBy: 1 });
 eventSchema.index({ dateTime: 1 });
+eventSchema.index({ isEvent: 1 });
+eventSchema.index({ isCommunity: 1 });
+
+// Post-save hook to verify data persistence
+eventSchema.post('save', function (doc) {
+    console.log('📝 Event POST-SAVE HOOK - Document saved to DB:');
+    console.log('   - _id:', doc._id);
+    console.log('   - name:', doc.name);
+    console.log('   - isEvent:', doc.isEvent);
+    console.log('   - isCommunity:', doc.isCommunity);
+    console.log('   - isVerified:', doc.isVerified);
+});
 
 export const Event = mongoose.model<IEvent>("Event", eventSchema);

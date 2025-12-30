@@ -15,9 +15,13 @@ router.post(
     authMiddleware,
     async (req: AuthRequest, res: Response): Promise<void> => {
         try {
-            console.log('📥 POST /events Request received');
+            console.log('📥 POST /events (UPDATED V2) Request received');
             console.log('   - User:', req.user?.userId);
-            console.log('   - Body:', JSON.stringify(req.body));
+            console.log('   - Body Type:', typeof req.body);
+            console.log('   - Body keys:', Object.keys(req.body));
+            console.log('   - isEvent:', req.body.isEvent);
+            console.log('   - isCommunity:', req.body.isCommunity);
+            console.log('   - Body JSON:', JSON.stringify(req.body));
 
             if (!req.user) {
                 console.log('❌ Unauthorized: No user');
@@ -37,51 +41,121 @@ router.post(
                 photos,
                 videos,
                 tags,
+                isEvent,
+                isCommunity,
+                pdfFile, // Base64 encoded PDF (only for events)
             } = req.body;
 
             // Basic validation
-            if (!name || !description || !dateTime || !location) {
+            if (!name || !description || !location) {
                 res.status(400).json({
                     error: "Bad Request",
-                    message: "Missing required fields: name, description, dateTime, location",
+                    message: "Missing required fields: name, description, location",
                 });
                 return;
             }
 
+            // Date/time is only required for events, not communities
+            if (isEvent && !dateTime) {
+                res.status(400).json({
+                    error: "Bad Request",
+                    message: "Date and time are required for events",
+                });
+                return;
+            }
+
+            // Extract text from PDF if provided (only for events)
+            let pdfExtractedText = '';
+            if (pdfFile && isEvent) {
+                try {
+                    const { PdfService } = await import("../services/pdfService");
+
+                    // Validate PDF
+                    if (!PdfService.isValidPdf(pdfFile)) {
+                        res.status(400).json({
+                            error: "Bad Request",
+                            message: "Invalid PDF file format",
+                        });
+                        return;
+                    }
+
+                    console.log('📄 Extracting text from PDF...');
+                    pdfExtractedText = await PdfService.extractTextFromPdf(pdfFile);
+                    console.log(`✅ PDF text extracted. Length: ${pdfExtractedText.length} characters`);
+                } catch (err) {
+                    console.error("❌ Failed to extract PDF text:", err);
+                    res.status(500).json({
+                        error: "Internal Server Error",
+                        message: "Failed to process PDF file. Please try again."
+                    });
+                    return;
+                }
+            }
+
             // Generate Embedding FIRST (before saving to DB)
+            // Include PDF extracted text for richer embeddings
             let eventEmbedding: number[] = [];
             try {
                 const { EmbeddingService } = await import("../services/embeddingService");
                 // Create a temporary object for text generation
-                const tempEvent = { name, headline, description, tags, location };
+                const tempEvent = {
+                    name,
+                    headline,
+                    description,
+                    tags,
+                    location,
+                    pdfExtractedText // Include PDF content in embeddings
+                };
                 const eventText = EmbeddingService.createEventText(tempEvent);
 
                 if (eventText) {
-                    console.log(`📝 Generating embedding for new event: "${name}"`);
+                    console.log(`📝 Generating Local embedding for new event: "${name}"`);
                     eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
-                    console.log(`✅ Embedding generated. Dimension: ${eventEmbedding.length}`);
+                    console.log(`✅ Local embedding generated. Dimension: ${eventEmbedding.length}`);
                 }
             } catch (err) {
                 console.error("❌ Failed to generate embedding:", err);
-                res.status(500).json({
-                    error: "Internal Server Error",
-                    message: "Failed to generate AI embedding for event. Please try again."
-                });
-                return; // Stop execution if embedding fails (per user request)
+                // Proceed without embedding if it fails
             }
 
-            const event = await Event.create({
-                name,
-                headline,
-                description,
-                dateTime: new Date(dateTime),
-                location,
-                photos: photos || [],
-                videos: videos || [],
-                tags: tags || [],
-                createdBy: req.user.userId,
-                eventEmbedding: eventEmbedding // Store immediately
-            });
+            // Create event object with EXPLICIT field assignment
+            const eventDoc = new Event();
+            eventDoc.name = name;
+            eventDoc.headline = headline;
+            eventDoc.description = description;
+            if (dateTime) {
+                eventDoc.dateTime = new Date(dateTime);
+            }
+            eventDoc.location = location;
+            eventDoc.photos = photos || [];
+            eventDoc.videos = videos || [];
+            eventDoc.tags = tags || [];
+            eventDoc.createdBy = req.user.userId;
+            eventDoc.eventEmbedding = eventEmbedding;
+
+            // Store PDF data (only for events)
+            if (pdfFile && isEvent) {
+                eventDoc.pdfFile = pdfFile;
+                eventDoc.pdfExtractedText = pdfExtractedText;
+            }
+
+            // CRITICAL: Explicitly set boolean flags
+            eventDoc.isEvent = isEvent !== undefined ? Boolean(isEvent) : true;
+            eventDoc.isCommunity = isCommunity !== undefined ? Boolean(isCommunity) : false;
+            eventDoc.isVerified = false; // Always false on creation
+
+            console.log('💾 Saving Event with flags:');
+            console.log('   - isEvent:', eventDoc.isEvent);
+            console.log('   - isCommunity:', eventDoc.isCommunity);
+            console.log('   - isVerified:', eventDoc.isVerified);
+
+            const event = await eventDoc.save();
+
+            console.log('✅ Event saved. Verifying fields in saved document:');
+            console.log('   - Saved isEvent:', event.isEvent);
+            console.log('   - Saved isCommunity:', event.isCommunity);
+            console.log('   - Saved pdfFile:', event.pdfFile ? `${event.pdfFile.substring(0, 50)}... (${event.pdfFile.length} chars)` : 'null');
+            console.log('   - Saved pdfExtractedText:', event.pdfExtractedText ? `${event.pdfExtractedText.substring(0, 50)}... (${event.pdfExtractedText.length} chars)` : 'null');
 
             res.status(201).json({
                 message: "Event created successfully",
@@ -125,6 +199,8 @@ router.get(
                 const userId = req.user.userId;
                 const eventsWithData = events.map(event => ({
                     ...event.toObject(),
+                    isEvent: event.isEvent,
+                    isCommunity: event.isCommunity,
                     isJoined: event.attendees.some(a => a.toString() === userId)
                 }));
 
@@ -167,6 +243,8 @@ router.get(
                             isVerified: 1,
                             createdBy: 1,
                             attendees: 1,
+                            isEvent: 1,
+                            isCommunity: 1,
                             score: { $meta: "vectorSearchScore" }
                         }
                     }
@@ -175,26 +253,29 @@ router.get(
                 // Populate createdBy (since aggregate returns raw IDs)
                 await Event.populate(events, { path: "createdBy", select: "name photoUrl role company" });
 
-                // Post-processing: Log scores & Add isJoined
+                // PRODUCTION-READY: Use vector scores with smart threshold
                 const userId = req.user.userId;
+                const minScore = 0.50; // 50% minimum match (wider range)
 
                 const processedEvents = events
+                    .filter((event: any) => event.score >= minScore) // Filter low matches
                     .map((event: any) => {
-                        // Log all events with their scores
-                        console.log(`📊 Event: "${event.name}" | Score: ${event.score.toFixed(4)}`);
+                        const matchPercentage = Math.round(event.score * 100);
+                        console.log(`📊 Event: "${event.name}" | Match: ${matchPercentage}%`);
 
                         return {
                             ...event,
+                            matchScore: matchPercentage,
                             isJoined: event.attendees
                                 ? event.attendees.some((a: any) => a.toString() === userId)
                                 : false
                         };
                     });
 
-                console.log(`ℹ️ Returning ${processedEvents.length} events sorted by relevance score (descending)`);
+                console.log(`ℹ️ Returning ${processedEvents.length} recommended events (${minScore * 100}%+ match)`);
 
                 res.status(200).json({
-                    message: "Events retrieved successfully (Personalized)",
+                    message: "Events retrieved successfully (Smart Recommendations)",
                     data: processedEvents,
                 });
             } catch (vectorError) {
@@ -208,6 +289,8 @@ router.get(
                 const userId = req.user.userId;
                 const eventsWithData = events.map(event => ({
                     ...event.toObject(),
+                    isEvent: event.isEvent,
+                    isCommunity: event.isCommunity,
                     isJoined: event.attendees.some(a => a.toString() === userId)
                 }));
 
@@ -613,4 +696,89 @@ router.post(
         }
     }
 );
+
+/**
+ * POST /:id/assistant
+ * Event Assistant - Ask questions about a specific event
+ */
+router.post(
+    "/:id/assistant",
+    authMiddleware,
+    async (req: AuthRequest, res: Response): Promise<void> => {
+        try {
+            const eventId = req.params.id;
+            const { question, conversationHistory } = req.body;
+
+            if (!req.user) {
+                res.status(401).json({ error: "Unauthorized" });
+                return;
+            }
+
+            if (!question || typeof question !== 'string') {
+                res.status(400).json({
+                    error: "Bad Request",
+                    message: "Question is required"
+                });
+                return;
+            }
+
+            // Get event details
+            const event = await Event.findById(eventId)
+                .populate("createdBy", "name photoUrl role company");
+
+            if (!event) {
+                res.status(404).json({
+                    error: "Not Found",
+                    message: "Event not found"
+                });
+                return;
+            }
+
+            // Get user profile
+            const User = (await import("../models/User")).User;
+            const user = await User.findById(req.user.userId);
+
+            if (!user) {
+                res.status(404).json({
+                    error: "Not Found",
+                    message: "User not found"
+                });
+                return;
+            }
+
+            console.log(`💬 Event Assistant: "${question}" about "${event.name}"`);
+
+            // Use Event Assistant Service
+            const { EventAssistantService } = await import("../services/eventAssistantService");
+
+            const response = await EventAssistantService.askEventAssistant(
+                question,
+                event.toObject(),
+                user.toObject(),
+                conversationHistory || []
+            );
+
+            res.status(200).json({
+                message: "Question answered successfully",
+                data: {
+                    question,
+                    answer: response.answer,
+                    relevantInfo: response.relevantInfo,
+                    confidence: response.confidence,
+                    suggestedQuestions: EventAssistantService.getSuggestedQuestions(
+                        event.toObject(),
+                        user.toObject()
+                    )
+                }
+            });
+        } catch (error: any) {
+            console.error("Error in event assistant:", error);
+            res.status(500).json({
+                error: "Internal Server Error",
+                message: "Failed to process question"
+            });
+        }
+    }
+);
+
 export default router;

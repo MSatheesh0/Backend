@@ -146,6 +146,8 @@ const connectDB = async (): Promise<void> => {
 // ========================================
 
 const startServer = async (): Promise<void> => {
+  // Force reload
+  console.log("🔥🔥🔥 THIS IS THE UPDATED BACKEND - VERSION 2024-12-30 🔥🔥🔥");
   try {
     // Log app mode and configuration
     logAppMode();

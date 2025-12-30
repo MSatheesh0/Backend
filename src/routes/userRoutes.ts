@@ -124,18 +124,18 @@ router.put(
             const mergedUser = { ...currentUser, ...updates };
             const profileText = EmbeddingService.createUserProfileText(mergedUser);
 
-            console.log("📝 Generating embedding for profile text:", profileText);
+            console.log("📝 Generating LOCAL embedding for profile text:", profileText);
             if (profileText) {
               const embedding = await EmbeddingService.generateEmbedding(profileText);
               if (embedding && embedding.length > 0) {
                 updates.profileEmbedding = embedding; // Add to updates
-                console.log("✅ Profile embedding generated (Dimensions: " + embedding.length + ")");
+                console.log("✅ Local profile embedding generated (Dimensions: " + embedding.length + ")");
               }
             }
           }
         } catch (err) {
           console.error("❌ Failed to generate profile embedding:", err);
-          // Proceed without embedding if it fails, to not block the profile update
+          // Proceed without embedding if it fails
         }
       }
 
