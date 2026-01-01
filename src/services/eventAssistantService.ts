@@ -1,7 +1,10 @@
-import Groq from "groq-sdk";
-import config from "../config";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
 
-const groq = new Groq({ apiKey: config.groqApiKey });
+dotenv.config();
+
+const apiKey = process.env.GEMINI_API_KEY;
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -17,81 +20,143 @@ export interface EventAssistantResponse {
 
 export const EventAssistantService = {
     /**
-     * Event Assistant Chatbot using Groq (Llama 3)
+     * Event Assistant Chatbot using Google Gemini
      */
     askEventAssistant: async (
         question: string,
         event: any,
         userProfile: any,
-        conversationHistory: any[] = []
+        _conversationHistory: any[] = []
     ): Promise<EventAssistantResponse> => {
         try {
-            console.log(`🤖 Groq Assistant: Processing question about "${event.name}"`);
+            console.log(`🤖 EventAssistant: Processing "${question}"`);
 
-            // Build context
-            const eventContext = `
-EVENT DETAILS:
-- Name: ${event.name}
-- Headline: ${event.headline || 'N/A'}
-- Description: ${event.description}
-- Date: ${event.dateTime}
-- Location: ${event.location}
-- Tags: ${event.tags?.join(', ') || 'None'}
-${event.pdfExtractedText ? `- Extra Content: ${event.pdfExtractedText}` : ''}
+            // 1️⃣ CLASSIFY INTENT
+            // 1️⃣ CLASSIFY INTENT (Rule-Based, No LLM)
+            const lowerQ = question.toLowerCase();
+            let intent = "GENERAL";
 
-USER PROFILE:
-- Name: ${userProfile.name}
-- Role: ${userProfile.role || 'N/A'}
-- Interests: ${userProfile.interests?.join(', ') || 'N/A'}
-- Goal: ${userProfile.primaryGoal || 'N/A'}
-`;
+            const metadataKeywords = ["where", "when", "venue", "location", "date", "time", "duration", "deadline"];
+            const contentKeywords = ["learn", "agenda", "session", "topic", "speaker", "workshop", "outcome", "schedule", "what will i", "track"];
+            const personalKeywords = ["for me", "useful", "benefit", "my profile", "should i", "relevant", "worth", "fit"];
 
-            const historyText = conversationHistory
-                .map(msg => `${msg.role.toUpperCase()}: ${msg.content}`)
-                .join('\n');
-
-            const systemPrompt = `You are an intelligent Event Assistant. 
-Answer the user's question based strictly on the provided EVENT DETAILS and USER PROFILE.
-Be helpful, concise, and professional.
-
-Return ONLY a JSON object in this format:
-{
-  "answer": "Your answer string here",
-  "relevantInfo": ["Key point 1", "Key point 2"],
-  "confidence": 85
-}
-Do not include markdown formatting (like \`\`\`json) outside the JSON.`;
-
-            if (!config.groqApiKey) {
-                console.error("❌ Groq API Key is missing in config!");
-            } else {
-                console.log(`🔑 Using Groq API Key: ...${config.groqApiKey.slice(-4)}`);
+            if (metadataKeywords.some(k => lowerQ.includes(k))) {
+                intent = "METADATA";
+            } else if (contentKeywords.some(k => lowerQ.includes(k))) {
+                intent = "CONTENT";
+            } else if (personalKeywords.some(k => lowerQ.includes(k))) {
+                intent = "PERSONAL";
             }
 
-            const completion = await groq.chat.completions.create({
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: `CONTEXT:\n${eventContext}\n\nHISTORY:\n${historyText}\n\nQUESTION: ${question}` }
-                ],
-                model: "llama-3.3-70b-versatile", // Latest stable model
-                temperature: 0.5,
-                max_tokens: 1024,
-                response_format: { type: "json_object" }
-            });
+            console.log(`🔍 Intent Classified (Deterministic): ${intent}`);
 
-            const content = completion.choices[0]?.message?.content || "{}";
-            const response = JSON.parse(content);
+            // 2️⃣ EXECUTE FLOW BASED ON INTENT
+            if (intent === "METADATA") {
+                // FLOW 1: METADATA (Structured Data Only)
+                console.log("⚡ Executing Metadata Flow");
+                const answer = `
+                **Date:** ${event.dateTime ? new Date(event.dateTime).toLocaleString() : 'TBD'}
+                **Location:** ${event.location}
+                **Venue:** ${event.location}
+                `;
+                return {
+                    answer: answer.trim(),
+                    relevantInfo: ["Metadata retrieved directly from database"],
+                    confidence: 100
+                };
+            }
 
-            console.log(`✅ Groq Answer: ${response.answer?.substring(0, 50)}...`);
+            let contextChunks = "";
+            let relevantInfo: string[] = [];
+
+            if (intent === "CONTENT" || intent === "PERSONAL") {
+                // FLOW 2 & 3: RAG Retrieval
+                console.log("📚 Executing RAG Flow for Content/Personal");
+
+                // 1. Embed Question
+                // Note: We need to import the EmbeddingService here. 
+                // Since this is a static method in an object, we can import it dynamically or assume it's available.
+                const { EmbeddingService } = await import("./embeddingService");
+                const queryEmbedding = await EmbeddingService.generateEmbedding(question);
+
+                // 2. Vector Search on PDF Chunks (in-memory filtering for now, or DB aggregation)
+                // Since 'event' object is passed in, we access its chunks directly if populated.
+                // In a production scenario with large datasets, you'd do a DB aggregation.
+                // Here we assume event.pdfChunks is available.
+
+                if (event.pdfChunks && event.pdfChunks.length > 0) {
+                    const chunks = event.pdfChunks;
+
+                    // Cosine Similarity
+                    const scoredChunks = chunks.map((chunk: any) => {
+                        const score = cosineSimilarity(queryEmbedding, chunk.embedding);
+                        return { text: chunk.text, score };
+                    });
+
+                    // Sort and Top-K
+                    scoredChunks.sort((a: any, b: any) => b.score - a.score);
+                    const topChunks = scoredChunks.slice(0, 5); // Top 5
+
+                    contextChunks = topChunks.map((c: any) => `- ${c.text}`).join("\n\n");
+                    relevantInfo = topChunks.map(() => "Contains relevant info");
+                    console.log(`📄 Retrieved ${topChunks.length} chunks from PDF`);
+                } else {
+                    console.log("⚠️ No PDF chunks found for this event.");
+                }
+            }
+
+            // 3️⃣ GENERATE ANSWER (LLM)
+            // Different prompts for Content vs Personal
+
+            let systemPrompt = "";
+            let userContent = "";
+
+            if (intent === "CONTENT") {
+                systemPrompt = `You are a helpful Event Assistant. Answer the user's question regarding specific event details (agenda, topics, etc).
+                Use ONLY the provided "PDF CONTENT" context.
+                If the answer is not in the context, state "The event details do not mention this."
+                Keep your answer short, concise (max 2-3 sentences), and direct. No filler words.`;
+
+                userContent = `PDF CONTENT:\n${contextChunks}\n\nQUESTION: ${question}`;
+
+            } else if (intent === "PERSONAL") {
+                systemPrompt = `You are a helpful advisor. The user is asking if this event is relevant to them.
+                Reason based on the "PDF CONTENT" and "USER PROFILE".
+                Give a strict "Yes" or "No" recommendation followed by one sentence explaining why. Keep it very short.`;
+
+                const userProfileText = `Name: ${userProfile.name}, Role: ${userProfile.role}, Interests: ${userProfile.interests?.join(", ")}`;
+                userContent = `PDF CONTENT:\n${contextChunks}\n\nUSER PROFILE:\n${userProfileText}\n\nQUESTION: ${question}`;
+
+            } else {
+                // General/Fallthrough
+                systemPrompt = `You are a helpful assistant for the event "${event.name}". Answer politely and briefly (1 sentence).`;
+                userContent = `QUESTION: ${question}`;
+            }
+
+            if (!genAI) {
+                console.error("❌ GEMINI_API_KEY is missing.");
+                return {
+                    answer: "I'm having trouble connecting to the AI service. Please check configuration.",
+                    relevantInfo: [],
+                    confidence: 0
+                };
+            }
+
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const finalPrompt = `${systemPrompt}\n\n${userContent}`;
+
+            const result = await model.generateContent(finalPrompt);
+            const response = await result.response;
+            const finalAnswer = response.text() || "I couldn't generate an answer.";
 
             return {
-                answer: response.answer || "I couldn't generate an answer based on the event details.",
-                relevantInfo: response.relevantInfo || [],
-                confidence: response.confidence || 50
+                answer: finalAnswer,
+                relevantInfo: relevantInfo,
+                confidence: 85
             };
 
         } catch (error: any) {
-            console.error("❌ Groq Error:", error);
+            console.error("❌ Gemini Error:", error);
             return {
                 answer: "I'm having trouble connecting to the event assistant right now. Please try again later.",
                 relevantInfo: [],
@@ -102,10 +167,23 @@ Do not include markdown formatting (like \`\`\`json) outside the JSON.`;
 
     getSuggestedQuestions: (_event: any, _userProfile: any): string[] => {
         return [
-            "What is the main agenda?",
-            "Who is this event for?",
-            "Is there a networking session?",
-            "What should I bring?"
+            "What is the agenda?",
+            "Is this relevant for me?",
+            "Who are the speakers?",
+            "Where is it involved?"
         ];
     }
 };
+
+// Utility for cosine similarity
+function cosineSimilarity(vecA: number[], vecB: number[]) {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}

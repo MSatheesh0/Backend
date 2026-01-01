@@ -21,7 +21,11 @@ router.post(
             console.log('   - Body keys:', Object.keys(req.body));
             console.log('   - isEvent:', req.body.isEvent);
             console.log('   - isCommunity:', req.body.isCommunity);
-            console.log('   - Body JSON:', JSON.stringify(req.body));
+            const sanitizedBody = { ...req.body };
+            if (sanitizedBody.pdfFile) {
+                sanitizedBody.pdfFile = `[Base64 PDF Data - ${sanitizedBody.pdfFile.length} chars]`;
+            }
+            console.log('   - Body JSON:', JSON.stringify(sanitizedBody).substring(0, 1000) + '...'); // Limit log length
 
             if (!req.user) {
                 console.log('❌ Unauthorized: No user');
@@ -56,7 +60,7 @@ router.post(
             }
 
             // Date/time is only required for events, not communities
-            if (isEvent && !dateTime) {
+            if (isEvent && !isCommunity && !dateTime) {
                 res.status(400).json({
                     error: "Bad Request",
                     message: "Date and time are required for events",
@@ -64,9 +68,9 @@ router.post(
                 return;
             }
 
-            // Extract text from PDF if provided (only for events)
+            // Extract text from PDF if provided (only for events, NOT communities)
             let pdfExtractedText = '';
-            if (pdfFile && isEvent) {
+            if (pdfFile && isEvent && !isCommunity) {
                 try {
                     const { PdfService } = await import("../services/pdfService");
 
@@ -90,9 +94,35 @@ router.post(
                     });
                     return;
                 }
+            } else if (isCommunity) {
+                console.log('ℹ️ Community creation detected: Skipping PDF extraction and RAG pipeline explicitly.');
             }
 
-            // Generate Embedding FIRST (before saving to DB)
+            // 2. RAG PIPELINE INTEGRATION (CRITICAL STEP)
+            // Generate Semantic Chunks for the PDF (Only for Events)
+            let pdfChunks: any[] = [];
+            if (pdfFile && isEvent && !isCommunity) {
+                try {
+                    const { RagPipelineService } = await import("../services/ragPipelineService");
+                    console.log('🤖 Triggering RAG Pipeline for PDF...');
+                    pdfChunks = await RagPipelineService.processEventPdf(pdfFile);
+                    console.log(`✅ RAG Pipeline finished. Generated ${pdfChunks.length} chunks.`);
+
+                    if (pdfChunks.length === 0) {
+                        console.warn("⚠️ Warning: RAG Pipeline returned 0 chunks. PDF might be empty or unreadable.");
+                        throw new Error("RAG Pipeline failed to generate chunks. Event creation aborted.");
+                    }
+                } catch (ragError: any) {
+                    console.error("❌ RAG Pipeline failed:", ragError);
+                    res.status(500).json({
+                        error: "Internal Server Error",
+                        message: "Failed to process PDF text chunks. " + ragError.message
+                    });
+                    return;
+                }
+            }
+
+            // 3. Generate Embedding for the EVENT (Conditional on RAG success)
             // Include PDF extracted text for richer embeddings
             let eventEmbedding: number[] = [];
             try {
@@ -104,14 +134,14 @@ router.post(
                     description,
                     tags,
                     location,
-                    pdfExtractedText // Include PDF content in embeddings
+                    pdfExtractedText: pdfExtractedText // Use the extracted text
                 };
                 const eventText = EmbeddingService.createEventText(tempEvent);
 
                 if (eventText) {
-                    console.log(`📝 Generating Local embedding for new event: "${name}"`);
+                    console.log(`📝 Generating Gemini embedding for new ${isCommunity ? 'community' : 'event'}: "${name}"`);
                     eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
-                    console.log(`✅ Local embedding generated. Dimension: ${eventEmbedding.length}`);
+                    console.log(`✅ Gemini embedding generated. Dimension: ${eventEmbedding.length}`);
                 }
             } catch (err) {
                 console.error("❌ Failed to generate embedding:", err);
@@ -134,9 +164,10 @@ router.post(
             eventDoc.eventEmbedding = eventEmbedding;
 
             // Store PDF data (only for events)
-            if (pdfFile && isEvent) {
+            if (pdfFile && isEvent && !isCommunity) {
                 eventDoc.pdfFile = pdfFile;
                 eventDoc.pdfExtractedText = pdfExtractedText;
+                eventDoc.pdfChunks = pdfChunks;
             }
 
             // CRITICAL: Explicitly set boolean flags
@@ -154,12 +185,16 @@ router.post(
             console.log('✅ Event saved. Verifying fields in saved document:');
             console.log('   - Saved isEvent:', event.isEvent);
             console.log('   - Saved isCommunity:', event.isCommunity);
-            console.log('   - Saved pdfFile:', event.pdfFile ? `${event.pdfFile.substring(0, 50)}... (${event.pdfFile.length} chars)` : 'null');
+            console.log('   - Saved pdfFile: [REDACTED]');
             console.log('   - Saved pdfExtractedText:', event.pdfExtractedText ? `${event.pdfExtractedText.substring(0, 50)}... (${event.pdfExtractedText.length} chars)` : 'null');
+
+            // Prepare response data (exclude large PDF data)
+            const eventResponse = event.toObject();
+            delete eventResponse.pdfFile;
 
             res.status(201).json({
                 message: "Event created successfully",
-                data: event,
+                data: eventResponse,
             });
         } catch (error: any) {
             console.error("Error creating event:", error);
@@ -390,6 +425,25 @@ router.put(
                     message: "You are not authorized to update this event",
                 });
                 return;
+            }
+
+            // HANDLE PDF UPDATE
+            if (updates.pdfFile) {
+                try {
+                    const { PdfService } = await import("../services/pdfService");
+                    // Note: You should check if it IS an event, but usually irrelevant for update unless strict
+                    if (PdfService.isValidPdf(updates.pdfFile)) {
+                        console.log('📄 UPDATE: Extracting text from new PDF...');
+                        updates.pdfExtractedText = await PdfService.extractTextFromPdf(updates.pdfFile);
+
+                        // RAG Pipeline
+                        const { RagPipelineService } = await import("../services/ragPipelineService");
+                        console.log('🤖 UPDATE: Triggering RAG Pipeline...');
+                        updates.pdfChunks = await RagPipelineService.processEventPdf(updates.pdfFile);
+                    }
+                } catch (err) {
+                    console.error("❌ Failed to process PDF update:", err);
+                }
             }
 
             const event = await Event.findByIdAndUpdate(id, updates, {
@@ -746,36 +800,26 @@ router.post(
                 return;
             }
 
-            console.log(`💬 Event Assistant: "${question}" about "${event.name}"`);
-
-            // Use Event Assistant Service
+            // Get Event Assistant Service
             const { EventAssistantService } = await import("../services/eventAssistantService");
 
-            const response = await EventAssistantService.askEventAssistant(
+            const response = await EventAssistantService.askQuestion(
+                event,
                 question,
-                event.toObject(),
-                user.toObject(),
+                user, // Pass the Mongoose document
                 conversationHistory || []
             );
 
             res.status(200).json({
-                message: "Question answered successfully",
-                data: {
-                    question,
-                    answer: response.answer,
-                    relevantInfo: response.relevantInfo,
-                    confidence: response.confidence,
-                    suggestedQuestions: EventAssistantService.getSuggestedQuestions(
-                        event.toObject(),
-                        user.toObject()
-                    )
-                }
+                message: "Assistant response generated",
+                data: response
             });
+
         } catch (error: any) {
-            console.error("Error in event assistant:", error);
+            console.error("Error in Event Assistant:", error);
             res.status(500).json({
                 error: "Internal Server Error",
-                message: "Failed to process question"
+                message: "Failed to get assistant response"
             });
         }
     }

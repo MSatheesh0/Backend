@@ -1,26 +1,16 @@
-import { pipeline } from "@xenova/transformers";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
 
-// Type definition for the pipeline function
-type FeatureExtractionPipeline = (text: string | string[], options?: any) => Promise<any>;
+dotenv.config();
 
-// Singleton to hold the pipeline instance
-let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
-
-// Function to get or initialize the pipeline
-const getExtractor = (): Promise<FeatureExtractionPipeline> => {
-    if (!extractorPromise) {
-        // We use all-MiniLM-L6-v2 which produces 384-dim embeddings
-        // This is much lighter (~80MB) and prevents OOM crashes on Render Free Tier
-        console.log("Loading local embedding model (Xenova/all-MiniLM-L6-v2)...");
-        extractorPromise = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
-    }
-    return extractorPromise;
-};
+// Initialize Gemini Client
+const apiKey = process.env.GEMINI_API_KEY;
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export const EmbeddingService = {
     /**
-     * Generates a text embedding using local 'all-MiniLM-L6-v2' model.
-     * Dimensions: 384
+     * Generates a text embedding using Gemini 'text-embedding-004'.
+     * Dimensions: 768
      */
     generateEmbedding: async (text: string): Promise<number[]> => {
         try {
@@ -29,21 +19,22 @@ export const EmbeddingService = {
                 return [];
             }
 
-            const extractor = await getExtractor();
+            if (!genAI) {
+                console.error("❌ GEMINI_API_KEY is missing. Cannot generate embedding.");
+                return [];
+            }
+
+            const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
 
             // Generate embedding
-            // pooling: 'mean' averages the token embeddings to get a single sentence embedding
-            // normalize: true ensures the vector has length 1 (good for cosine similarity)
-            const output = await extractor(text, { pooling: "mean", normalize: true });
-
-            // Convert Tensor to plain array
-            const embedding = Array.from(output.data) as number[];
+            const result = await model.embedContent(text);
+            const embedding = result.embedding.values;
 
             return embedding;
         } catch (error) {
-            console.error("Error generating local embedding:", error);
-            // Fallback to zeros if generation fails (384 dimensions)
-            return new Array(384).fill(0);
+            console.error("Error generating Gemini embedding:", error);
+            // Fallback to empty array or throw
+            return [];
         }
     },
 
@@ -58,6 +49,8 @@ export const EmbeddingService = {
             user.role,
             user.primaryGoal,
             user.location,
+            user.company,
+            user.oneLiner // "About" section
         ].filter(Boolean);
 
         return parts.join(". ");

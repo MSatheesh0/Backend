@@ -19,6 +19,11 @@ export interface IEvent extends Document {
     createdBy: mongoose.Types.ObjectId;
     attendees: mongoose.Types.ObjectId[];
     eventEmbedding?: number[];
+    pdfChunks?: {
+        chunkId: string;
+        text: string;
+        embedding: number[];
+    }[];
     attachments?: {
         url: string;
         name: string;
@@ -108,6 +113,13 @@ const eventSchema = new Schema<IEvent>(
             {
                 type: Number,
             },
+        ],
+        pdfChunks: [
+            {
+                chunkId: String,
+                text: String,
+                embedding: [Number]
+            }
         ],
     },
     {

@@ -61,6 +61,9 @@ export const debugLogger = (
   if (req.body && Object.keys(req.body).length > 0) {
     console.log("\n📦 Request Body:");
     const sanitizedBody = { ...req.body };
+    if (sanitizedBody.pdfFile) {
+      sanitizedBody.pdfFile = "[Base64 PDF Data - REDACTED]";
+    }
     const sensitiveFields = ["password", "otp", "token"];
     sensitiveFields.forEach((field) => {
       if (sanitizedBody[field]) {
@@ -88,6 +91,14 @@ export const debugLogger = (
 
     // Sanitize response body for logging
     const sanitizedResponse = JSON.parse(JSON.stringify(body));
+    if (sanitizedResponse.data && sanitizedResponse.data.pdfFile) {
+      sanitizedResponse.data.pdfFile = "[Base64 PDF Data - REDACTED]";
+    }
+    // Also check root level just in case
+    if (sanitizedResponse.pdfFile) {
+      sanitizedResponse.pdfFile = "[Base64 PDF Data - REDACTED]";
+    }
+
     if (sanitizedResponse.token) {
       sanitizedResponse.token =
         sanitizedResponse.token.substring(0, 20) + "...";
@@ -128,8 +139,7 @@ export const logAppMode = () => {
   console.log(`🔌 Port: ${config.port}`);
   console.log(`🗄️  MongoDB: ${config.mongodbUri}`);
   console.log(
-    `📧 Email Mode: ${
-      config.appMode === "development" ? "STATIC OTP (123456)" : "SMTP"
+    `📧 Email Mode: ${config.appMode === "development" ? "STATIC OTP (123456)" : "SMTP"
     }`
   );
   console.log("=".repeat(80) + "\n");

@@ -103,16 +103,26 @@ router.put(
 
 
       // Check if semantic fields are being updated
+      // Check if semantic fields are being updated
       const semanticFields = [
         "interests",
         "skills",
         "role",
         "primaryGoal",
         "location",
+        "oneLiner", // about section
+        "company",  // company info
+        "name"      // even name changes might affect context
       ];
       const needsEmbeddingUpdate = semanticFields.some(
         (field) => updates[field] !== undefined
       );
+
+      console.log(`🔍 Checking embedding update. Needs update? ${needsEmbeddingUpdate}`);
+      if (!needsEmbeddingUpdate && updates.profileEmbedding) {
+        // If the client explicitly sends an embedding (unlikely but possible), let it pass?
+        // No, we generate it locally.
+      }
 
       // Generate embedding SYNCHRONOUSLY if needed
       if (needsEmbeddingUpdate) {

@@ -1,0 +1,5 @@
+pymupdf
+google-generativeai
+langchain-text-splitters
+python-dotenv
+tiktoken
