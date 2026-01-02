@@ -83,7 +83,9 @@ export const EmbeddingService = {
             event.description,
             event.tags?.join(", "),
             event.location,
-            event.pdfExtractedText // Include PDF content
+            // Handle single or multiple extracted texts
+            event.pdfExtractedText,
+            ...(event.pdfExtractedTexts || [])
         ].filter(Boolean);
 
         return parts.join(". ");

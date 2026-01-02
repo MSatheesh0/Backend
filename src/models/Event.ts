@@ -11,8 +11,8 @@ export interface IEvent extends Document {
     photos: string[]; // Base64 strings
     videos: string[]; // URLs or Base64 (limited support)
     tags: string[];
-    pdfFile?: string; // Base64 encoded PDF (only for events)
-    pdfExtractedText?: string; // Extracted text from PDF
+    pdfFiles?: string[]; // Array of Base64 encoded PDFs
+    pdfExtractedTexts?: string[]; // Array of extracted texts from PDFs
     isEvent: boolean;
     isCommunity: boolean;
     isVerified: boolean;
@@ -81,12 +81,16 @@ const eventSchema = new Schema<IEvent>(
                 trim: true,
             },
         ],
-        pdfFile: {
-            type: String, // Base64 encoded PDF
-        },
-        pdfExtractedText: {
-            type: String, // Extracted text from PDF
-        },
+        pdfFiles: [
+            {
+                type: String, // Base64 encoded PDFs
+            },
+        ],
+        pdfExtractedTexts: [
+            {
+                type: String, // Extracted texts from PDFs
+            },
+        ],
         isEvent: {
             type: Boolean,
             default: true,

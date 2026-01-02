@@ -7,10 +7,10 @@ import {
 import {
   generateAccessToken,
   createRefreshToken,
-  hasActiveSession,
   deleteAllUserRefreshTokens,
   deleteRefreshTokenByDevice,
   getUserSessions,
+  deleteRefreshTokenById,
 } from "../services/tokenService";
 import { User } from "../models/User";
 
@@ -127,20 +127,21 @@ router.post(
       const userId = peekUser._id.toString();
       const ipAddress = req.ip || req.socket.remoteAddress || undefined;
 
-      // Check current device session status
-      const hasSessionOnSameDevice = deviceId
-        ? await hasActiveSession(userId, deviceId)
-        : false;
+      // Get all active sessions for this user
+      const activeSessions = await getUserSessions(userId);
 
-      const hasAnySession = await hasActiveSession(userId);
+      // Filter for sessions that are on OTHER devices
+      // We only conflict if there's a session with a different Device ID
+      const otherDeviceSessions = activeSessions.filter(s =>
+        s.deviceId && s.deviceId !== deviceId
+      );
 
-      // Scenario: Login from NEW device, but account has active sessions on OTHER devices
-      if (hasAnySession && !hasSessionOnSameDevice && !logoutFromOtherDevices) {
-        const sessions = await getUserSessions(userId);
+      // Scenario: Account is being used on a DIFFERENT device
+      if (otherDeviceSessions.length > 0 && !logoutFromOtherDevices) {
         res.status(409).json({
           error: "Conflict",
           message: "You are already logged in on another device",
-          sessions: sessions.map((s) => ({
+          sessions: otherDeviceSessions.map((s) => ({
             deviceId: s.deviceId,
             deviceInfo: s.deviceInfo,
             ipAddress: s.ipAddress,
@@ -151,31 +152,18 @@ router.post(
         return;
       }
 
-      // Cleanup Logic
-      if (deviceId) {
-        // If explicitly requested to logout other devices
-        if (logoutFromOtherDevices) {
-          try {
-            const allSessions = await getUserSessions(userId);
-            for (const session of allSessions) {
-              // Delete sessions for OTHER devices
-              if (session.deviceId && session.deviceId !== deviceId) {
-                await deleteRefreshTokenByDevice(userId, session.deviceId);
-              }
-            }
-          } catch (error) {
-            console.error("Error logging out from other devices:", error);
-          }
-        }
-
-        // CRITICAL: Always clear any EXISTING session for THIS device before creating a new one
-        // This ensures we refresh the token cleanly and don't stack up sessions for the same device ID
-        if (hasSessionOnSameDevice) {
-          try {
-            await deleteRefreshTokenByDevice(userId, deviceId);
-          } catch (error) {
-            console.error("Error clearing old session for this device:", error);
-          }
+      // Cleanup Logic: Kill old sessions before starting a new one
+      // 1. If user requested to logout others
+      if (logoutFromOtherDevices) {
+        await deleteAllUserRefreshTokens(userId);
+      } else {
+        // 2. ALWAYS clear any old session for THIS specific device or orphaned sessions
+        // This keeps the DB clean and prevents session stacking
+        const sessionsToClear = activeSessions.filter(s =>
+          !s.deviceId || s.deviceId === deviceId
+        );
+        for (const s of sessionsToClear) {
+          await deleteRefreshTokenById(s._id);
         }
       }
 
@@ -251,6 +239,7 @@ router.post(
       const userData = await verifyRefreshToken(refreshToken);
 
       if (!userData) {
+        console.warn(`[Refresh] Invalid or expired refresh token: ${refreshToken.substring(0, 10)}...`);
         res.status(401).json({
           error: "Unauthorized",
           message: "Invalid or expired refresh token",
@@ -260,7 +249,14 @@ router.post(
 
       // Check if user is blocked
       const user = await User.findById(userData.userId);
-      if (!user || (user as any).isBlocked) {
+      if (!user) {
+        console.warn(`[Refresh] User not found during refresh: ${userData.userId}`);
+        res.status(401).json({ error: "Unauthorized", message: "User not found" });
+        return;
+      }
+
+      if ((user as any).isBlocked) {
+        console.warn(`[Refresh] Blocked user attempted refresh: ${userData.userId}`);
         const { deleteAllUserRefreshTokens } = await import("../services/tokenService");
         await deleteAllUserRefreshTokens(userData.userId);
         res.status(403).json({
@@ -273,11 +269,12 @@ router.post(
       // Generate new access token
       const accessToken = generateAccessToken(userData.userId, userData.email);
 
+      console.log(`[Refresh] Successfully refreshed token for ${userData.email}`);
       res.status(200).json({
         accessToken,
       });
     } catch (error) {
-      console.error("Error in refresh:", error);
+      console.error("❌ Error in refresh:", error);
       res.status(500).json({
         error: "Internal Server Error",
         message: "Failed to refresh token",

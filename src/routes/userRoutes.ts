@@ -98,8 +98,23 @@ router.put(
         }
       }
 
-      // Validate role if provided (REMOVED - now accepts any custom role)
-      // Validate primaryGoal if provided (REMOVED - now accepts any custom goal)
+      // 1. VALIDATE PHONE NUMBER UNIQUENESS
+      if (updates.phoneNumber) {
+        const existingUser = await User.findOne({
+          phoneNumber: updates.phoneNumber,
+          _id: { $ne: req.user.userId }
+        }).select('email');
+
+        if (existingUser) {
+          console.warn(`❌ Phone number ${updates.phoneNumber} already in use by ${existingUser.email}`);
+          res.status(409).json({
+            error: "Conflict",
+            message: `This phone number is already registered with email: ${existingUser.email}. Please use that email for login.`,
+            existingEmail: existingUser.email
+          });
+          return;
+        }
+      }
 
 
       // Check if semantic fields are being updated

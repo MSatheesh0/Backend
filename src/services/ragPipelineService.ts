@@ -10,6 +10,33 @@ export class RagPipelineService {
     private static pipelineScript = path.join(__dirname, '../../ai_pipeline/rag_pipeline.py');
 
     /**
+     * Processes multiple Base64 PDFs using the Python RAG pipeline.
+     * Returns a merged array of chunks with embeddings.
+     */
+    static async processMultiplePdfs(pdfBase64s: string[]): Promise<any[]> {
+        console.log(`🚀 Starting RAG Pipeline for ${pdfBase64s.length} PDFs...`);
+        let allChunks: any[] = [];
+
+        for (let i = 0; i < pdfBase64s.length; i++) {
+            try {
+                console.log(`📑 Processing PDF ${i + 1}/${pdfBase64s.length}...`);
+                const chunks = await this.processEventPdf(pdfBase64s[i]);
+                // Prefix chunk IDs to avoid collisions
+                const prefixedChunks = chunks.map(c => ({
+                    ...c,
+                    chunkId: `pdf${i}_${c.chunkId}`
+                }));
+                allChunks = allChunks.concat(prefixedChunks);
+            } catch (err) {
+                console.error(`❌ Failed to process PDF ${i + 1}:`, err);
+            }
+        }
+
+        console.log(`✅ Finished RAG Pipeline for all PDFs. Total chunks: ${allChunks.length}`);
+        return allChunks;
+    }
+
+    /**
      * Processes a Base64 PDF using the Python RAG pipeline.
      * Returns an array of chunks with embeddings.
      */
@@ -36,8 +63,6 @@ export class RagPipelineService {
             fs.writeFileSync(inputPath, buffer);
 
             // 2. Run Python Script
-            // Ensure we use the python environment where dependencies are installed
-            // Assuming 'python' is in PATH and has the deps (verified in previous steps)
             const command = `python "${this.pipelineScript}" "${inputPath}" "${outputPath}"`;
             console.log(`🐍 Executing Python pipeline: ${command}`);
 

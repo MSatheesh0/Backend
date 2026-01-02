@@ -15,7 +15,7 @@ export const generateAccessToken = (userId: string, email: string): string => {
   };
 
   return jwt.sign(payload, config.jwtSecret, {
-    expiresIn: "15m", // 15 minutes
+    expiresIn: "1h", // 1 hour
   });
 };
 
@@ -71,6 +71,13 @@ export const verifyRefreshToken = async (
     if (!refreshToken) {
       return null;
     }
+
+    // SLIDING EXPIRATION: Extend the token life whenever it's used
+    const refreshTokenDays = parseInt(
+      process.env.REFRESH_TOKEN_EXPIRY_DAYS || "30"
+    );
+    refreshToken.expiresAt = new Date(Date.now() + refreshTokenDays * 24 * 60 * 60 * 1000);
+    await refreshToken.save();
 
     const user = await User.findById(refreshToken.userId).select("email");
     if (!user) {
@@ -149,7 +156,7 @@ export const getUserSessions = async (userId: string) => {
       userId,
       expiresAt: { $gt: new Date() },
     })
-      .select("deviceId deviceInfo ipAddress createdAt")
+      .select("_id deviceId deviceInfo ipAddress createdAt")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -172,6 +179,20 @@ export const deleteRefreshTokenByDevice = async (
     return true;
   } catch (error) {
     console.error("Error deleting refresh token by device:", error);
+    return false;
+  }
+};
+
+/**
+ * Delete refresh token by ID
+ */
+export const deleteRefreshTokenById = async (id: any): Promise<boolean> => {
+  try {
+    const { RefreshToken } = await import("../models/RefreshToken");
+    await RefreshToken.findByIdAndDelete(id);
+    return true;
+  } catch (error) {
+    console.error("Error deleting refresh token by ID:", error);
     return false;
   }
 };

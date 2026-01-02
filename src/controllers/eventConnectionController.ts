@@ -331,6 +331,17 @@ export const addManualMember = async (req: Request, res: Response) => {
             }
         }
 
+        // Check for duplicate in this event
+        if (phoneNumber) {
+            const existing = await EventMember.findOne({ eventId, phoneNumber });
+            if (existing) {
+                return res.status(409).json({
+                    success: false,
+                    message: `A member with phone number ${phoneNumber} is already added to this event.`
+                });
+            }
+        }
+
         const newMember = new EventMember({
             eventId,
             organizerId,
@@ -414,32 +425,47 @@ export const uploadMembersExcel = async (req: Request, res: Response) => {
         const sheet = workbook.Sheets[sheetName];
         const data = XLSX.utils.sheet_to_json(sheet) as any[];
 
-        const results = [];
+        const added = [];
+        const duplicates = [];
+
         for (const row of data) {
             // Flexible column matching
             const name = row['Name'] || row['name'] || row['NAME'];
-            const phone = row['Mobile'] || row['Phone'] || row['Number'] || row['mobile'] || row['phone'];
+            const phoneField = row['Mobile'] || row['Phone'] || row['Number'] || row['mobile'] || row['phone'];
+            const phone = phoneField ? String(phoneField).trim() : undefined;
 
             if (name) {
                 try {
+                    // Check for duplicate in this event
+                    if (phone) {
+                        const existing = await EventMember.findOne({ eventId, phoneNumber: phone });
+                        if (existing) {
+                            duplicates.push({ name, phoneNumber: phone });
+                            continue;
+                        }
+                    }
+
                     const newMember = await EventMember.create({
                         eventId,
                         organizerId,
                         name,
-                        phoneNumber: phone ? String(phone) : undefined,
+                        phoneNumber: phone,
                         source: 'excel'
                     });
-                    results.push(newMember);
+                    added.push(newMember);
                 } catch (err) {
-                    console.warn('Skipping duplicate or invalid member:', name);
+                    console.warn('Error adding member from excel:', name, err);
                 }
             }
         }
 
         return res.status(200).json({
             success: true,
-            message: `Processed ${results.length} members`,
-            count: results.length
+            message: `Processed ${data.length} records.`,
+            count: added.length,
+            addedCount: added.length,
+            duplicateCount: duplicates.length,
+            duplicates: duplicates // Show which numbers were rejected
         });
 
     } catch (error) {

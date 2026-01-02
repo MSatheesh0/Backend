@@ -22,8 +22,8 @@ router.post(
             console.log('   - isEvent:', req.body.isEvent);
             console.log('   - isCommunity:', req.body.isCommunity);
             const sanitizedBody = { ...req.body };
-            if (sanitizedBody.pdfFile) {
-                sanitizedBody.pdfFile = `[Base64 PDF Data - ${sanitizedBody.pdfFile.length} chars]`;
+            if (sanitizedBody.pdfFiles) {
+                sanitizedBody.pdfFiles = sanitizedBody.pdfFiles.map((p: string) => `[Base64 PDF Data - ${p.length} chars]`);
             }
             console.log('   - Body JSON:', JSON.stringify(sanitizedBody).substring(0, 1000) + '...'); // Limit log length
 
@@ -47,7 +47,7 @@ router.post(
                 tags,
                 isEvent,
                 isCommunity,
-                pdfFile, // Base64 encoded PDF (only for events)
+                pdfFiles, // Array of Base64 encoded PDFs
             } = req.body;
 
             // Basic validation
@@ -68,44 +68,38 @@ router.post(
                 return;
             }
 
-            // Extract text from PDF if provided (only for events, NOT communities)
-            let pdfExtractedText = '';
-            if (pdfFile && isEvent && !isCommunity) {
+            // Extract text from PDF if provided
+            let pdfExtractedTexts: string[] = [];
+            if (pdfFiles && Array.isArray(pdfFiles) && pdfFiles.length > 0) {
                 try {
                     const { PdfService } = await import("../services/pdfService");
 
-                    // Validate PDF
-                    if (!PdfService.isValidPdf(pdfFile)) {
-                        res.status(400).json({
-                            error: "Bad Request",
-                            message: "Invalid PDF file format",
-                        });
-                        return;
-                    }
+                    for (const pdf of pdfFiles) {
+                        // Validate PDF
+                        if (!PdfService.isValidPdf(pdf)) {
+                            console.warn('⚠️ Invalid PDF file format detected in array. Skipping.');
+                            continue;
+                        }
 
-                    console.log('📄 Extracting text from PDF...');
-                    pdfExtractedText = await PdfService.extractTextFromPdf(pdfFile);
-                    console.log(`✅ PDF text extracted. Length: ${pdfExtractedText.length} characters`);
+                        console.log('📄 Extracting text from PDF...');
+                        const text = await PdfService.extractTextFromPdf(pdf);
+                        pdfExtractedTexts.push(text);
+                        console.log(`✅ PDF text extracted. Length: ${text.length} characters`);
+                    }
                 } catch (err) {
                     console.error("❌ Failed to extract PDF text:", err);
-                    res.status(500).json({
-                        error: "Internal Server Error",
-                        message: "Failed to process PDF file. Please try again."
-                    });
-                    return;
+                    // Continue even if extraction fails
                 }
-            } else if (isCommunity) {
-                console.log('ℹ️ Community creation detected: Skipping PDF extraction and RAG pipeline explicitly.');
             }
 
             // 2. RAG PIPELINE INTEGRATION (CRITICAL STEP)
             // Generate Semantic Chunks for the PDF (Only for Events)
             let pdfChunks: any[] = [];
-            if (pdfFile && isEvent && !isCommunity) {
+            if (pdfFiles && Array.isArray(pdfFiles) && pdfFiles.length > 0) {
                 try {
                     const { RagPipelineService } = await import("../services/ragPipelineService");
-                    console.log('🤖 Triggering RAG Pipeline for PDF...');
-                    pdfChunks = await RagPipelineService.processEventPdf(pdfFile);
+                    console.log('🤖 Triggering RAG Pipeline for PDFs...');
+                    pdfChunks = await RagPipelineService.processMultiplePdfs(pdfFiles);
                     console.log(`✅ RAG Pipeline finished. Generated ${pdfChunks.length} chunks.`);
 
                     if (pdfChunks.length === 0) {
@@ -128,7 +122,7 @@ router.post(
                     description,
                     tags,
                     location,
-                    pdfExtractedText
+                    pdfExtractedTexts
                 };
 
                 const metadataText = EmbeddingService.createEventMetadataText(tempEvent);
@@ -160,8 +154,8 @@ router.post(
             eventDoc.pdfChunks = pdfChunks;
             eventDoc.metadataEmbedding = metadataEmbedding;
             eventDoc.eventEmbedding = eventEmbedding;
-            eventDoc.pdfFile = pdfFile; // Store original PDF base64
-            eventDoc.pdfExtractedText = pdfExtractedText; // Store extracted text
+            eventDoc.pdfFiles = pdfFiles || []; // Store original PDF base64s
+            eventDoc.pdfExtractedTexts = pdfExtractedTexts; // Store extracted texts
             eventDoc.isVerified = false; // Always false on creation;
             eventDoc.photos = photos || [];
             eventDoc.videos = videos || [];
@@ -190,12 +184,13 @@ router.post(
             console.log('✅ Event saved. Verifying fields in saved document:');
             console.log('   - Saved isEvent:', event.isEvent);
             console.log('   - Saved isCommunity:', event.isCommunity);
-            console.log('   - Saved pdfFile: [REDACTED]');
-            console.log('   - Saved pdfExtractedText:', event.pdfExtractedText ? `${event.pdfExtractedText.substring(0, 50)}... (${event.pdfExtractedText.length} chars)` : 'null');
+            console.log('   - Saved pdfFiles:', event.pdfFiles?.length || 0);
+            console.log('   - Saved pdfExtractedTexts count:', event.pdfExtractedTexts?.length || 0);
 
             // Prepare response data (exclude large PDF data)
             const eventResponse = event.toObject();
-            delete eventResponse.pdfFile;
+            delete eventResponse.pdfFiles;
+            delete eventResponse.pdfFile; // Backend compat
 
             res.status(201).json({
                 message: "Event created successfully",
@@ -411,17 +406,23 @@ router.put(
 
             // 1. Process PDF for RAG if it exists but hasn't been processed
             let pdfChunks = baseEvent.pdfChunks;
-            let pdfExtractedText = baseEvent.pdfExtractedText;
+            let pdfExtractedTexts = baseEvent.pdfExtractedTexts;
 
             // Safety check: if for some reason chunks are missing, regenerate them
-            if (baseEvent.pdfFile && (!pdfChunks || pdfChunks.length === 0)) {
+            if (baseEvent.pdfFiles && baseEvent.pdfFiles.length > 0 && (!pdfChunks || pdfChunks.length === 0)) {
                 try {
                     const { RagPipelineService } = await import("../services/ragPipelineService");
-                    pdfChunks = await RagPipelineService.processEventPdf(baseEvent.pdfFile);
+                    pdfChunks = await RagPipelineService.processMultiplePdfs(baseEvent.pdfFiles);
 
-                    if (!pdfExtractedText) {
+                    if (!pdfExtractedTexts || pdfExtractedTexts.length === 0) {
                         const { PdfService } = await import("../services/pdfService");
-                        pdfExtractedText = await PdfService.extractTextFromPdf(baseEvent.pdfFile);
+                        const extracted: string[] = [];
+                        for (const pdf of baseEvent.pdfFiles) {
+                            if (PdfService.isValidPdf(pdf)) {
+                                extracted.push(await PdfService.extractTextFromPdf(pdf));
+                            }
+                        }
+                        pdfExtractedTexts = extracted;
                     }
                 } catch (ragErr) {
                     console.error("❌ Failed to process PDF during verification:", ragErr);
@@ -439,7 +440,7 @@ router.put(
                     const metadataText = EmbeddingService.createEventMetadataText(baseEvent.toObject());
                     const eventText = EmbeddingService.createEventText({
                         ...baseEvent.toObject(),
-                        pdfExtractedText
+                        pdfExtractedTexts
                     });
 
                     if (metadataText === eventText) {
@@ -466,7 +467,7 @@ router.put(
                     eventEmbedding,
                     metadataEmbedding,
                     pdfChunks,
-                    pdfExtractedText
+                    pdfExtractedTexts
                 },
                 { new: true }
             );
@@ -696,25 +697,29 @@ router.put(
             }
 
             // 1. HANDLE PDF UPDATE
-            if (updates.pdfFile) {
+            if (updates.pdfFiles && Array.isArray(updates.pdfFiles) && updates.pdfFiles.length > 0) {
                 try {
-                    console.log('📄 UPDATE: PDF modified. Updating PDF chunks and event embedding...');
+                    console.log(`📄 UPDATE: ${updates.pdfFiles.length} PDFs modified. Updating chunks and embeddings...`);
                     const { PdfService } = await import("../services/pdfService");
-                    if (PdfService.isValidPdf(updates.pdfFile)) {
-                        updates.pdfExtractedText = await PdfService.extractTextFromPdf(updates.pdfFile);
+                    const { RagPipelineService } = await import("../services/ragPipelineService");
 
-                        // RAG Pipeline
-                        const { RagPipelineService } = await import("../services/ragPipelineService");
-                        updates.pdfChunks = await RagPipelineService.processEventPdf(updates.pdfFile);
-
-                        // Regenerate combined/PDF embedding
-                        const { EmbeddingService } = await import("../services/embeddingService");
-                        const eventText = EmbeddingService.createEventText({
-                            ...existingEvent.toObject(),
-                            ...updates
-                        });
-                        updates.eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
+                    const extractedTexts: string[] = [];
+                    for (const pdf of updates.pdfFiles) {
+                        if (PdfService.isValidPdf(pdf)) {
+                            const text = await PdfService.extractTextFromPdf(pdf);
+                            extractedTexts.push(text);
+                        }
                     }
+                    updates.pdfExtractedTexts = extractedTexts;
+                    updates.pdfChunks = await RagPipelineService.processMultiplePdfs(updates.pdfFiles);
+
+                    // Regenerate combined/PDF embedding
+                    const { EmbeddingService } = await import("../services/embeddingService");
+                    const eventText = EmbeddingService.createEventText({
+                        ...existingEvent.toObject(),
+                        ...updates
+                    });
+                    updates.eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
                 } catch (err) {
                     console.error("❌ Failed to process PDF update:", err);
                 }
@@ -724,7 +729,7 @@ router.put(
             const metadataFields = ['name', 'headline', 'description', 'location', 'tags'];
             const hasMetadataChanges = metadataFields.some(field => updates[field] !== undefined);
 
-            if (hasMetadataChanges || updates.pdfFile) {
+            if (hasMetadataChanges || updates.pdfFiles) {
                 try {
                     const { EmbeddingService } = await import("../services/embeddingService");
                     const metadataText = EmbeddingService.createEventMetadataText({
@@ -746,7 +751,7 @@ router.put(
                             console.log('📝 UPDATE: Metadata modified. Regenerating metadata embedding...');
                             updates.metadataEmbedding = await EmbeddingService.generateEmbedding(metadataText);
                         }
-                        if (updates.pdfFile) {
+                        if (updates.pdfFiles) {
                             console.log('📝 UPDATE: PDF modified. Regenerating event embedding...');
                             updates.eventEmbedding = await EmbeddingService.generateEmbedding(eventText);
                         }
